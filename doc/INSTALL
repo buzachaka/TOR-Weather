@@ -1,0 +1,125 @@
+1) Make sure a Tor instance is running somewhere with control port enabled. In
+   addition to the control port, make sure to set the following configuration
+   values in your torrc file:
+
+        FetchDirInfoEarly 1
+        FetchUselessDescriptors 1 
+
+2) In weather/settings.py, change the EMAIL_* fields to reflect your SMTP 
+   configurations and the email address for sending the Tor Weather 
+   notifications. 
+
+3) In weather.config.config.py, set control_port to the ControlPort specified
+   by your local torrc if necessary. The default is 9051. Change the base_url 
+   field to reflect the base URL for the Tor Weather application.
+
+4) A copy of (or link to) the TorCtl package must be located within the weather
+   directory.
+
+   $ svn co https://svn.torproject.org/svn/torctl/branches/stable/python/TorCtl
+   $ cd current/weather
+   $ ln -s ../../TorCtl .
+
+5) Create a file named auth_token inside the weather.config directory and 
+   insert your Tor hashed control password in plain text. The file should 
+   otherwise be empty.
+
+6) Create the database by running the following command from within the weather
+   directory:
+	            
+   $ python manage.py syncdb
+
+   Ensure that the directory *and* database is writeable by the web server 
+   after running this. For instance, you may need to run:
+
+   $ chown weather.www-run ../var/WeatherDB
+   $ chown weather.www-run ../var
+   $ chmod 664 ../var/WeatherDB
+   $ chmod 775 ../var
+
+7) Look here for documentation concerning how to deploy the Django web 
+   application:
+
+        http://docs.djangoproject.com/en/dev/howto/deployment/
+
+   We recommend deploying Django with Apache and mod_wsgi. 
+
+7a) How to deploy weather using Apache and mod_wsgi:
+
+    - $ cat > /home/weather/opt/current/weather/weather.wsgi << EOF
+        import os
+        import sys
+
+        sys.path.append('/home/weather/opt/current')
+        sys.path.append('/home/weather/opt/current/weather')
+        sys.path.append('/home/weather/opt/current/weather/weatherapp')
+        os.environ['DJANGO_SETTINGS_MODULE'] = 'settings'
+
+        import django.core.handlers.wsgi
+        application = django.core.handlers.wsgi.WSGIHandler()
+        EOF
+     - Add the following line to your Apache configuration:
+
+       WSGIScriptAlias / /home/weather/opt/current/weather/weather.wsgi
+
+       $ cat apache.conf
+       # this is the apache config 
+       # from /srv/weather.torproject.org/etc/apache.conf
+       #
+       # run sudo apache2-vhost-update weather.torproject.org after editing this file
+
+       <VirtualHost *:80>
+               ServerName weather.torproject.org
+
+               ErrorLog  /var/log/apache2/weather2.torproject.org-error.log
+               CustomLog /var/log/apache2/weather2.torproject.org-access.log privacy
+
+               WSGIScriptAlias / /home/weather/opt/current/weather/weather.wsgi
+
+               RewriteEngine On
+               RewriteRule ^(.*)$ https://%{SERVER_NAME}$1 [L,R]
+       </VirtualHost>
+
+       <VirtualHost *:443>
+               SSLEngine on
+               SSLCertificateFile    /etc/ssl/certs/wildcard.torproject.org.pem
+               SSLCertificateKeyFile /etc/ssl/private/wildcard.torproject.org.key
+
+               ServerName weather.torproject.org
+
+               AliasMatch ^/([^/]*\.png) /home/weather/opt/current/weather/media/$1
+               AliasMatch ^/([^/]*\.css) /home/weather/opt/current/weather/media/$1
+               AliasMatch ^/([^/]*\.js) /home/weather/opt/current/weather/media/$1
+               Alias /media/ /home/weather/opt/current/weather/media/
+
+
+               ErrorLog  /var/log/apache2/weather2.torproject.org-error.log
+               CustomLog /var/log/apache2/weather2.torproject.org-access.log privacy
+
+               WSGIScriptAlias / /home/weather/opt/current/weather/weather.wsgi
+       </VirtualHost>
+
+     - Reload the Apache configuration
+
+8) Once the application is deployed, the listener application should be run 
+   from inside the weather directory:
+
+	    $ python manage.py runlistener
+
+   Or, more conveniently, add a cronjob for @reboot as follows:
+
+   @reboot /sbin/start-stop-daemon \
+       --start \
+       --background \
+       --chdir "/home/weather/opt/current/weather" \
+       --exec /usr/bin/python manage.py runlistener
+
+   The listener waits for consensus events from your local TorCtl process, then
+   updates the database and sends notifications.
+
+ WARNING: There should only be one instance of this application running at any
+ one time. The application does send a single email to new, stable relay
+ operators regardless of whether they've subscribed to Tor Weather. We hope to 
+ strictly limit the number of emails that are sent, so please do not run this 
+ application if it is already deployed somewhere.
+
